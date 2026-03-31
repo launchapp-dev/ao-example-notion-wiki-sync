@@ -1,0 +1,162 @@
+phases:
+  scan-pages:
+    mode: agent
+    agent: page-scanner
+    directive: |
+      Scan all pages in the configured Notion wiki database and extract full metadata.
+
+      Steps:
+      1. Read config/wiki-config.yaml to get notion.database_id and workspace_name
+      2. Use the Notion MCP to query the database — retrieve all pages (handle pagination)
+      3. For each page, fetch the full page content and extract:
+         - title, page_id, notion_url
+         - last_edited_time, last_edited_by, created_time
+         - Full text content (concatenate all blocks)
+         - All hyperlinks (both internal Notion page links and external URLs)
+         - All code blocks: { language, content }
+         - Code references: file paths, function names, class names, endpoints, commands
+           (look for patterns like src/*, *.ts, function names in backticks, /api/ routes)
+      4. Write output/page-inventory.json — array of page objects with all extracted fields
+      5. Print a summary: "Scanned N pages. Found X code references, Y links."
+
+      The output file MUST exist and contain valid JSON before this phase completes.
+    capabilities:
+      mutates_state: true
+      writes_files: true
+
+  analyze-staleness:
+    mode: agent
+    agent: staleness-analyzer
+    directive: |
+      Analyze all scanned pages and produce a staleness score for each one.
+
+      Steps:
+      1. Read output/page-inventory.json
+      2. Read staleness thresholds from config/wiki-config.yaml
+      3. For each page:
+         a. Compute days_since_edit from last_edited_time vs. today (2026-03-31)
+         b. Assign status based on thresholds:
+            - current: < stale_days (default 30)
+            - stale: stale_days to critical_days (30–90)
+            - critical: > critical_days (90+) OR has broken internal links
+            - archive-candidate: > archive_days (180)
+         c. Check broken links: for internal Notion links, verify they appear in the page inventory
+            (a link to a page ID not in the inventory = broken)
+         d. Build issues array with specific human-readable descriptions
+         e. Set recommended_action based on status
+      4. Write output/staleness-scores.json — array of scored page objects
+      5. Print status breakdown: "Current: N, Stale: N, Critical: N, Archive: N"
+    capabilities:
+      mutates_state: true
+      writes_files: true
+
+  cross-reference-code:
+    mode: agent
+    agent: code-cross-referencer
+    directive: |
+      Validate code references found in wiki pages against the actual repository.
+
+      Steps:
+      1. Read config/wiki-config.yaml for repository.path
+      2. Read output/page-inventory.json — focus on the code_references field per page
+      3. Use the filesystem MCP to explore the repository:
+         - List all files recursively from the repository path
+         - Read source files to check if function/class names exist
+      4. For each code reference:
+         a. Determine reference_type (file, function, class, endpoint, command, package)
+         b. Check existence using appropriate method
+         c. Set status: "found" | "not-found" | "uncertain"
+         d. Add notes if the reference was moved or partially matched
+      5. Write output/code-references.json — array of reference validation objects
+      6. Print summary: "Checked N references: X found, Y not-found, Z uncertain"
+
+      If the repository path doesn't exist or is empty, mark all references "uncertain"
+      with a note explaining the repo wasn't accessible.
+    capabilities:
+      mutates_state: true
+      writes_files: true
+
+  write-report:
+    mode: agent
+    agent: report-writer
+    directive: |
+      Synthesize all analysis data into a comprehensive staleness report and action plan.
+
+      Steps:
+      1. Read output/page-inventory.json, output/staleness-scores.json, output/code-references.json
+      2. Read templates/report-template.md for the report structure
+      3. Generate output/staleness-report.md:
+         - Executive Summary with aggregate statistics and top 5 critical pages
+         - Per-page breakdown sorted by severity (critical first)
+         - Code reference mismatches section (only pages with not-found references)
+         - Priority action items numbered list
+      4. Generate output/actions.json — structured action plan:
+         - Include ONLY pages that need action (status != "current" with no issues)
+         - Set action to "comment" for stale/critical, "tag-archive" for archive-candidate,
+           "export" for critical pages, "none" for current pages with no issues
+         - Compose professional comment_text for each page that will receive a comment
+      5. Print summary: "Report written. Actions: X comments, Y archive tags, Z exports."
+
+      The report must be at least 200 lines for a real wiki. Be specific, not generic.
+    capabilities:
+      mutates_state: true
+      writes_files: true
+
+  review-audit:
+    mode: agent
+    agent: review-auditor
+    directive: |
+      Review the staleness report and action plan for accuracy before any Notion updates are made.
+
+      This is a quality gate. Review carefully:
+      1. Read output/staleness-report.md — is it complete and well-structured?
+      2. Read output/actions.json — are the actions reasonable?
+      3. Read output/code-references.json — check for likely false positives
+      4. Check for common issues:
+         - Pages that are intentionally static (changelogs, meeting notes, archived) flagged as critical
+         - Code symbols incorrectly marked "not-found" due to monorepo patterns or generated files
+         - Actions that would comment on recently-touched pages (< 7 days) — these are false alarms
+      5. If the report looks accurate and the action plan is sound → verdict: advance
+      6. If you find significant problems → verdict: rework with clear explanation
+
+      Your final line MUST be a JSON decision object:
+      {"verdict": "advance", "reasoning": "..."} OR {"verdict": "rework", "reasoning": "..."}
+    capabilities:
+      mutates_state: false
+      writes_files: false
+    decision_contract:
+      required_fields: [verdict, reasoning]
+
+  update-wiki:
+    mode: agent
+    agent: wiki-updater
+    directive: |
+      Execute the approved action plan: post Notion comments, tag archive candidates,
+      export critical pages, and commit the backup to git.
+
+      Steps:
+      1. Read output/actions.json and config/wiki-config.yaml
+      2. Process each action in order of priority (high → medium → low):
+
+         For action = "comment":
+         - Use Notion MCP to post a comment on the page
+         - Base the comment on comment_text from actions.json
+         - Make it professional: "This page was flagged by our weekly wiki audit..."
+         - Include specific issues and a suggested owner/action
+
+         For action = "tag-archive" (if config.actions.tag_archive_candidates = true):
+         - Use Notion MCP to update the page's Status property to "Archive Candidate"
+
+         For action = "export" (if config.actions.export_critical = true):
+         - Fetch full page content via Notion MCP
+         - Write to backup/<sanitized-page-title>.md with YAML frontmatter
+
+      3. Copy output/staleness-report.md to backup/reports/2026-03-31-staleness-report.md
+         using the filesystem MCP (read from output/, write to backup/reports/)
+      4. Write output/run-summary.json:
+         { "run_date": "2026-03-31", "pages_scanned": N, "comments_posted": N,
+           "pages_archived": N, "pages_exported": N, "report_path": "backup/reports/..." }
+    capabilities:
+      mutates_state: true
+      writes_files: true
+      requires_commit: true

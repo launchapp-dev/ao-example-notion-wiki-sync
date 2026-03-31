@@ -1,0 +1,45 @@
+default_workflow_ref: wiki-staleness-audit
+
+workflows:
+  - id: wiki-staleness-audit
+    name: "Notion Wiki Staleness Audit"
+    description: "Full weekly audit: scan all Notion wiki pages, score staleness, validate code references, generate report, review, and post updates"
+    phases:
+      - scan-pages
+      - analyze-staleness
+      - cross-reference-code
+      - write-report
+      - review-audit:
+          on_verdict:
+            rework:
+              target: write-report
+          max_rework_attempts: 2
+      - update-wiki
+    post_success:
+      merge:
+        strategy: squash
+        target_branch: main
+        create_pr: false
+        auto_merge: false
+        cleanup_worktree: true
+
+  - id: scan-only
+    name: "Page Scan Only"
+    description: "Scan and analyze pages without posting any Notion updates — useful for dry-run or debugging"
+    phases:
+      - scan-pages
+      - analyze-staleness
+      - cross-reference-code
+      - write-report
+
+  - id: report-refresh
+    name: "Refresh Report from Existing Scan"
+    description: "Re-generate the report from existing output files without re-scanning — useful when the report writer needs to be retried"
+    phases:
+      - write-report
+      - review-audit:
+          on_verdict:
+            rework:
+              target: write-report
+          max_rework_attempts: 2
+      - update-wiki

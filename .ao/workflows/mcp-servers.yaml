@@ -1,0 +1,17 @@
+mcp_servers:
+  notion:
+    command: npx
+    args: ["-y", "@notionhq/notion-mcp-server"]
+    env:
+      NOTION_TOKEN: "${NOTION_TOKEN}"
+
+  filesystem:
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-filesystem"
+      - "."
+      - "./output"
+      - "./backup"
+      - "./config"
+      - "./templates"

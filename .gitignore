@@ -1,0 +1,16 @@
+# Generated output files — regenerated each run
+output/page-inventory.json
+output/staleness-scores.json
+output/code-references.json
+output/actions.json
+output/run-summary.json
+
+# Keep the report
+!output/staleness-report.md
+
+# Backup exports are git-tracked (that's the point)
+!backup/
+
+# AO runtime artifacts
+.ao/logs/
+.ao/state/

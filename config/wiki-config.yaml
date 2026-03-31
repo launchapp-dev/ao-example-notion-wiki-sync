@@ -1,0 +1,17 @@
+notion:
+  database_id: "your-wiki-database-id"    # The Notion database ID containing your wiki pages
+  workspace_name: "Your Workspace"         # Human-readable name for reports
+
+repository:
+  path: "/path/to/your/codebase"          # Absolute path to the repo to cross-reference code mentions
+
+thresholds:
+  stale_days: 30                           # Days without edit before a page is "stale"
+  critical_days: 90                        # Days without edit before a page is "critical"
+  archive_days: 180                        # Days without edit before a page is an "archive-candidate"
+
+actions:
+  post_comments: true                      # Post staleness warning comments on stale/critical pages
+  tag_archive_candidates: true             # Update Status property to "Archive Candidate" on old pages
+  export_critical: true                    # Export critical-status pages to markdown backup
+  auto_commit_backup: true                 # Git commit the backup exports and reports after each run
